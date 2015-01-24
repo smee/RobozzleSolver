@@ -1,5 +1,6 @@
 (ns robotrunner
-  (:require [clojure.string :as cs]))
+  (:require [clojure.string :as cs]
+            [clojure.walk :refer [postwalk]]))
 
 ;;;;;;;;; constants ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
@@ -21,7 +22,7 @@
 (def sub2idx {:f1 0 :f2 1 :f3 2 :f4 3 :f5 4})
 (def idx2sub [:f1 :f2 :f3 :f4 :f5])
 
-(defn star? [tile]
+(defn star? [^Character tile]
   (java.lang.Character/isUpperCase tile))
 
 (defn count-stars [board]
@@ -130,13 +131,14 @@
      :tiles-visited (/ (count seen) (:non-blank-tiles task))}))
 
 (defn run-program [program task]
-  (let [state (init-state task program)
+  (let [program (postwalk #(if (seq? %) (vec %) %) program)
+        state (init-state task program)
         steps (iterate run-step state)]
     (loop [steps steps, n 0, stats {}] 
       (let [state (first steps)
             stats (update-statistics stats task state)]
         (cond 
-          (> n 100) {:status :too-long :steps n :stats stats}
+          (> n 1000) {:status :too-long :steps n :stats stats}
           (not (valid? state)) {:status :invalid-move :steps n :stats stats}
           (nil? (:ip state)) {:status :no-more-moves :steps n :stats stats}
           (won? state) {:status :success :steps n :stats stats}
@@ -145,22 +147,23 @@
 ;;;;;;;;;;;;;;;;;;; Genetic Algorithms based solver ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 (defn generate-individual [{subs :subs ac :allowed-commands}]
-  (vec (for [n subs :when (pos? n)]
-        (vec (repeatedly (rand n) #(rand-nth ac))))))
+  (for [n subs :when (pos? n)]
+    (repeatedly (rand n) #(rand-nth ac))))
 
 (defn crossover-single [max-length ind1 ind2]
   (let [[left-1 right-1] (split-at (inc (rand (count ind1))) ind1)
         [left-2 right-2] (split-at (inc (rand (count ind2))) ind2)]
-    [(vec (take max-length (vec (concat left-1 right-2))))
-     (vec (take max-length (vec (concat left-2 right-1))))]))
+    [(take max-length (concat left-1 right-2))
+     (take max-length (concat left-2 right-1))]))
 
 (defn crossover [subs ind1 ind2]
-  (mapv crossover-single subs ind1 ind2))
+  (let [children-per-fn (map crossover-single subs ind1 ind2)]
+    (apply map vector children-per-fn)))
 
 (defn mutate [task individual]
   (for [fx individual] 
     (for [cmd fx]
-      (if (< (rand) 0.05)
+      (if (< (rand) 0.15)
         (rand-nth (:allowed-commands task))
         cmd))))
 
@@ -168,23 +171,26 @@
   (let [{:keys [status stats] :as res} (run-program individual task)
         score (if (= :success status)
                 1e6
-                (+ (* 100 (:stars-found stats))
-                   (* 10 (:tiles-visited stats))))] 
+                (+ (* 10 (:stars-found stats))
+                   (* 1 (:tiles-visited stats))))] 
     (assoc res :score score)))
 
 (defn run-generation [task population]
   (let [fitnesses (pmap (partial fitness task) population)
         sm (into (sorted-map) (mapv vector (mapv :score fitnesses) population))
-        best-fitness (first (last sm))
+        [best-fitness best-individual] (last sm)
         n (count population)
         good-third (mapv second (take (inc (int (/ n 3))) (reverse (seq sm))))
-        best-individual (first good-third)
-        children (apply concat (mapv (partial crossover (:subs task)) (shuffle good-third) (shuffle good-third)))
-        new-population (concat good-third (map (partial mutate task) children))]
+        children (mapcat (partial crossover (:subs task)) (shuffle good-third) (shuffle good-third))
+        ;children (concat good-third good-third)
+        new-population (concat good-third (map (partial mutate task) children))
+        perfect? (= 1e6 best-fitness)]
+    (when perfect?
+      (println "found one:" (pr-str best-individual) best-fitness))
     (with-meta new-population 
       {:best-fitness best-fitness
        :best-individual best-individual
-       :perfect? (= 1e6 best-fitness)})))
+       :perfect? perfect?})))
 
 (comment
   (def task (parse "/home/steffen/Dropbox/Workspaces/private-workspace/robozzleGA/html/play.aspx?puzzle=140"))
@@ -195,8 +201,10 @@
   (require '[incanter.core :refer [view]])
   (require '[incanter.charts :as ic])
   (time 
-    (let [population (repeatedly 300 #(generate-individual task))
-          results (take 200 (iterate (partial run-generation task) population))]
+    (let [population (repeatedly 1000 #(generate-individual task))
+          results (take 1000 (take-while #(not (-> % meta :perfect?)) (iterate (partial run-generation task) population)))
+          best (-> results last meta)]
       (view (ic/xy-plot (range) (map (comp :best-fitness meta) results)))
-      (clojure.pprint/pprint (-> results last meta))))
+      (clojure.pprint/pprint best)
+      (run-program (:best-individual best) task)))
   )
