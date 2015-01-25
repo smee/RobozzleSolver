@@ -6,6 +6,4 @@
   :dependencies [[org.clojure/clojure "1.7.0-alpha4"]
                  [incanter/incanter-charts "1.5.5"
                   :exclusions [incanter/jfreechart]]
-                 [chart-utils "1.1.0-SNAPSHOT"
-                  :exclusions [[org.jzy3d/jzy3d-api]
-                               [org.jzy3d/jzy3d-jdt-core]]]])
+                 [clj-http "1.0.1"]])

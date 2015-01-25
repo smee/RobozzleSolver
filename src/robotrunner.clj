@@ -1,5 +1,7 @@
 (ns robotrunner
   (:require [clojure.string :as cs]
+            [clj-http.client :as http]
+            [clj-http.cookies]
             [clojure.walk :refer [postwalk]]))
 
 ;;;;;;;;; constants ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -182,7 +184,7 @@
         n (count population)
         good-third (mapv second (take (inc (int (/ n 3))) (reverse (seq sm))))
         children (mapcat (partial crossover (:subs task)) (shuffle good-third) (shuffle good-third))
-        ;children (concat good-third good-third)
+        children (concat good-third good-third)
         new-population (concat good-third (map (partial mutate task) children))
         perfect? (= 1e6 best-fitness)]
     (when perfect?
@@ -191,6 +193,51 @@
       {:best-fitness best-fitness
        :best-individual best-individual
        :perfect? perfect?})))
+
+(defn take-until
+  "Returns a lazy sequence of successive items from coll until
+  (pred item) returns true, including that item. pred must be
+  free of side-effects."
+  [pred coll]
+  (lazy-seq
+    (when-let [s (seq coll)]
+      (if (pred (first s))
+        (cons (first s) nil)
+        (cons (first s) (take-until pred (rest s)))))))
+
+;;;;;;;;;;;;;;;; web interaction ;;;;;;;;;;;;;;;;;;;;
+(defn- encode-program [program]
+  (let [actions {:move \F :left \L :right \R :mark-red \r :mark-green \g :mark-blue \b :f1 1 :f2 2 :f3 3 :f4 4 :f5 5}
+        colors {\b \b \g \g \r \r nil \_}
+        enc (cs/join "|" (for [fn program] (apply str (for [[opcode color] fn] (str (colors color) (actions opcode))))))]
+    (cs/join "|" (cons enc (repeat (- 5 (count program)) "")))))
+
+(defn login [user pw]
+  (let [my-cs (clj-http.cookies/cookie-store)
+        login-success-page (:body (http/get "http://robozzle.com/login.aspx" {:cookie-store my-cs}))
+        [_ validation] (re-find #"id=\"__EVENTVALIDATION\" value=\"(.*)\"" login-success-page)
+        [_ view-state] (re-find #"id=\"__VIEWSTATE\" value=\"(.*)\"" login-success-page)]
+    (println (:status (http/post "http://robozzle.com/login.aspx"
+                              {:query-params {"ReturnURL" "/js/index.aspx"}
+                               :cookie-store my-cs
+                               :follow-redirects false
+                               :headers {"Referer" "http://robozzle.com/login.aspx?ReturnURL=/user.aspx?name=cljgabot"}
+                               :form-params {"__VIEWSTATE" view-state
+                                             "__EVENTVALIDATION" validation
+                                             "UserEmail" user
+                                             "UserPass" pw
+                                             "Submit1" "Log On"}})))
+    my-cs))
+
+(defn post-program [task program cookie-store]
+  (http/post "http://robozzle.com/js/submit.aspx"
+                 {:headers {"Referer" (str "http://robozzle.com/play.aspx?puzzle=" (:id task))
+                            "Origin" "http://robozzle.com"}
+                  :cookie-store cookie-store
+                  :follow-redirects false
+                  :proxy-host "127.0.0.1" :proxy-port 8080
+                  :form-params {"levelId" (:id task)
+                                "solution" (encode-program program)}}))
 
 (comment
   (def task (parse "/home/steffen/Dropbox/Workspaces/private-workspace/robozzleGA/html/play.aspx?puzzle=140"))
@@ -202,9 +249,10 @@
   (require '[incanter.charts :as ic])
   (time 
     (let [population (repeatedly 1000 #(generate-individual task))
-          results (take 1000 (take-while #(not (-> % meta :perfect?)) (iterate (partial run-generation task) population)))
+          generations (iterate (partial run-generation task) population)
+          results (take 1000 (take-until #(-> % meta :perfect?) generations))
           best (-> results last meta)]
-      (view (ic/xy-plot (range) (map (comp :best-fitness meta) results)))
+      ;(view (ic/xy-plot (range) (map (comp :best-fitness meta) results)))
       (clojure.pprint/pprint best)
       (run-program (:best-individual best) task)))
   )
