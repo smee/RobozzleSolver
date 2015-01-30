@@ -1,5 +1,6 @@
 (ns robotrunner
   (:require [clojure.string :as cs]
+            [clojure.java.io :refer [as-file]]
             [clj-http.client :as http]
             [clj-http.cookies]
             [clojure.walk :refer [postwalk]]))
@@ -14,7 +15,7 @@
 (def opcodes [:move :left :right :mark-red :mark-green :mark-blue :f1 :f2 :f3 :f4 :f5])
 (def board-size [16 12])
 
-(defrecord state [dir pos board ip stack])
+(defrecord state [dir pos board ip stack steps stars])
 
 ;;;;;;;;;;; helpers ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
@@ -27,8 +28,6 @@
 (defn star? [^Character tile]
   (java.lang.Character/isUpperCase tile))
 
-(defn count-stars [board]
-  (count (filter star? (apply concat board))))
 ;;;;;;;;;;; parsing and printing ;;;;;;;;;;;;;;;;;;;;;;
 
 (defn parse-board [s]
@@ -46,14 +45,16 @@
   (println (board2str state)))
 
 (defn available-commands [{b :board cmds :allowedCommands subs :subs}]
-  (let [colors (->> b (apply concat) (map tile-color) distinct)
+  (let [colors (-> (->> b (map tile-color) distinct set)
+                 (disj \space)
+                 (conj nil))
         commands (list* (when (not= 0 (bit-and cmds 1)):mark-red)
                         (when (not= 0 (bit-and cmds 2)) :mark-green)
                         (when (not= 0 (bit-and cmds 4)) :mark-blue)
                         :move :left :right
                         (keep-indexed (fn [i v] (when (> v 0) (idx2sub i))) subs))]
-    (for [cmd (remove nil? commands), color [nil \b \g \r]]
-      [cmd color])))
+    (for [cmd (remove nil? commands), color colors]
+     [cmd color])))
 
 (defn parse [file]
   (let [token (->> file
@@ -65,7 +66,7 @@
         pairs (map #(map cs/trim (cs/split % #":")) token)
         parsed-pairs (map (fn [[k v]] [(keyword k) (read-string v)]) pairs)
         parsed (into {} parsed-pairs)
-        board (parse-board (:board parsed))]
+        board (parse-board (:board parsed))] (def board board)
     {:allowed-commands (available-commands parsed)
      :pos [(:robotRow parsed) (:robotCol parsed)]
      :dir (:robotDir parsed)
@@ -73,12 +74,11 @@
      :title (:title parsed)
      :id (:id parsed)
      :subs (remove zero? (:subs parsed))
-     :stars (count-stars board)
+     :stars (count (filter star? (apply concat board)))
      :non-blank-tiles (count (remove #{\space} (apply concat board)))}))
 
 
 ;;;;;;;;;;; simulator ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-
 
 (defn turn-left [dir]
   (mod (+ 3 dir) 4))
@@ -86,15 +86,22 @@
 (defn turn-right [dir]
   (mod (inc dir) 4))
 
-(defn won? [state]
-  (zero? (count-stars (:board state))))
 
-(defn run-step [{:keys [dir pos ip stack program] :as state}]
+(defn won? [state]
+  (zero? (:stars state)))
+
+(defn run-step 
+  "Run one simulation step. Takes and returns the simulation state."
+  [{:keys [dir pos ip stack program n stars] :as state}]
   (let [tile-path (apply vector :board pos)
-        tile (get-in state tile-path) _ (when (nil? tile) (println "ERROR!") (print-state state))
+        tile (get-in state tile-path)
+        star? (star? tile)
         tile (tile-color tile)
-        state (assoc-in state tile-path tile) ; clear star on current tile
-        state (update-in state [:ip 1] inc) ; move instruction pointer
+        state (-> state
+                (assoc-in tile-path tile) ; clear star on current tile
+                (update-in [:ip 1] inc); move instruction pointer
+                (assoc :n (inc n))
+                (update :stars (if star? dec identity))) 
         [op-code op-color] (get-in program ip)]
     (if (and op-color (not= tile op-color))
       state 
@@ -105,46 +112,55 @@
         :mark-red (assoc-in state tile-path \r)
         :mark-green (assoc-in state tile-path \g)
         :mark-blue (assoc-in state tile-path \b)
-        nil (assoc state :ip (first stack) :stack (rest stack)) ; we ran out of opcodes, try to pop from stack
+        nil (run-step (assoc state :ip (first stack) :stack (rest stack))) ; we ran out of opcodes, try to pop from stack
         ;else a function call
-        (assoc state :ip [(sub2idx op-code) 0] :stack (cons (:ip state) stack))))))
+        (assoc state
+               ;:n n
+               :ip [(sub2idx op-code) 0] 
+               :stack (cons (:ip state) stack))))))
 
 
-(defn init-state [{:keys [dir pos board]} program]
+(defn init-state 
+  "Create initial state as specified in the task"
+  [{:keys [dir pos board stars]} program]
   (map->state {:dir dir 
                :pos pos 
                :board board 
                :ip [0 0] 
+               :n 0
                :stack []
+               :stars stars
                :program program}))
 
-(defn valid? [{:keys [dir pos ip program board]}] ;(println "valid?" pos ip program (get-in program ip) (get-in board pos))
+(defn valid? 
+  "Is the current state valid?"
+  [{:keys [dir pos ip program board]}] ;(println "valid?" pos ip program (get-in program ip) (get-in board pos))
   (and (<= 0 (first pos) (second board-size))
        (<= 0 (second pos) (first board-size))
        (not (nil? (get-in program ip)))
        (#{\b \g \r \B \G \R} (get-in board pos))))
 
-(defn update-statistics [stats task state]
+(defn update-statistics 
+  "Update statistics of the currently running program for the fitness function."
+  [stats task state]
   (let [stars (:stars task)
-        stars-left (count-stars (:board state))
+        stars-left (:stars state)
         seen ((fnil conj #{}) (:seen stats) (:pos state))]
     {:seen seen
      :stars-found (/ (- stars stars-left) stars)
      :tiles-visited (/ (count seen) (:non-blank-tiles task))}))
 
 (defn run-program [program task]
-  (let [program (postwalk #(if (seq? %) (vec %) %) program)
-        state (init-state task program)
-        steps (iterate run-step state)]
-    (loop [steps steps, n 0, stats {}] 
-      (let [state (first steps)
-            stats (update-statistics stats task state)]
+  (let [program (postwalk #(if (seq? %) (vec %) %) program) ; ensure all sequences are vectors
+        initial-state (init-state task program)]
+    (loop [state initial-state, stats {}] 
+      (let [stats (update-statistics stats task state)] 
         (cond 
-          (> n 1000) {:status :too-long :steps n :stats stats}
-          (not (valid? state)) {:status :invalid-move :steps n :stats stats}
-          (nil? (:ip state)) {:status :no-more-moves :steps n :stats stats}
-          (won? state) {:status :success :steps n :stats stats}
-          :else (recur (next steps) (inc n) stats))))))
+          (> (:n state) 1000) {:status :too-long :state state :stats stats}
+          (not (valid? state)) {:status :invalid-move :state state :stats stats}
+          (nil? (:ip state)) {:status :no-more-moves :state state :stats stats}
+          (won? state) {:status :success :state state :stats stats}
+          :else (recur (run-step state) stats))))))
 
 ;;;;;;;;;;;;;;;;;;; Genetic Algorithms based solver ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
@@ -177,14 +193,16 @@
                    (* 1 (:tiles-visited stats))))] 
     (assoc res :score score)))
 
+(def score-comparator (comparator (fn [a b] (< (:score a) (:score b)))))
+
 (defn run-generation [task population]
   (let [fitnesses (pmap (partial fitness task) population)
-        sm (into (sorted-map) (mapv vector (mapv :score fitnesses) population))
+        sm (into (sorted-map-by score-comparator) (mapv vector fitnesses population))
         [best-fitness best-individual] (last sm)
         n (count population)
         good-third (mapv second (take (inc (int (/ n 3))) (reverse (seq sm))))
         children (mapcat (partial crossover (:subs task)) (shuffle good-third) (shuffle good-third))
-        children (concat good-third good-third)
+;        children (concat good-third good-third)
         new-population (concat good-third (map (partial mutate task) children))
         perfect? (= 1e6 best-fitness)]
     (when perfect?
@@ -217,30 +235,32 @@
         login-success-page (:body (http/get "http://robozzle.com/login.aspx" {:cookie-store my-cs}))
         [_ validation] (re-find #"id=\"__EVENTVALIDATION\" value=\"(.*)\"" login-success-page)
         [_ view-state] (re-find #"id=\"__VIEWSTATE\" value=\"(.*)\"" login-success-page)]
-    (println (:status (http/post "http://robozzle.com/login.aspx"
-                              {:query-params {"ReturnURL" "/js/index.aspx"}
-                               :cookie-store my-cs
-                               :follow-redirects false
-                               :headers {"Referer" "http://robozzle.com/login.aspx?ReturnURL=/user.aspx?name=cljgabot"}
-                               :form-params {"__VIEWSTATE" view-state
-                                             "__EVENTVALIDATION" validation
-                                             "UserEmail" user
-                                             "UserPass" pw
-                                             "Submit1" "Log On"}})))
+    (println 
+      (:status 
+        (http/post "http://robozzle.com/login.aspx"
+                   {:query-params {"ReturnURL" "/js/index.aspx"}
+                    :cookie-store my-cs
+                    :follow-redirects false
+                    :headers {"Referer" "http://robozzle.com/login.aspx?ReturnURL=/user.aspx?name=cljgabot"}
+                    :form-params {"__VIEWSTATE" view-state
+                                  "__EVENTVALIDATION" validation
+                                  "UserEmail" user
+                                  "UserPass" pw
+                                  "Submit1" "Log On"}})))
     my-cs))
 
 (defn post-program [task program cookie-store]
   (http/post "http://robozzle.com/js/submit.aspx"
-                 {:headers {"Referer" (str "http://robozzle.com/play.aspx?puzzle=" (:id task))
-                            "Origin" "http://robozzle.com"}
-                  :cookie-store cookie-store
-                  :follow-redirects false
-                  :proxy-host "127.0.0.1" :proxy-port 8080
-                  :form-params {"levelId" (:id task)
-                                "solution" (encode-program program)}}))
+             {:headers {"Referer" (str "http://robozzle.com/play.aspx?puzzle=" (:id task))
+                        "Origin" "http://robozzle.com"}
+              :cookie-store cookie-store
+              :follow-redirects false
+              :form-params {"levelId" (:id task)
+                            "solution" (encode-program program)}}))
 
 (comment
-  (def task (parse "/home/steffen/Dropbox/Workspaces/private-workspace/robozzleGA/html/play.aspx?puzzle=140"))
+  (def task (parse "d:\\Dropbox\\workspaces\\private-workspace\\robozzleGA\\play.aspx@puzzle=27"))
+  (def task (parse (rand-nth (file-seq (as-file "/home/steffen/daten/privat/robozzle/")))))
   (print-state (init-state task []))
   (run-program [[[:move] [:right \b] [:right \g] [:f1]]] task)
   (run-program [[[:move nil] [:f1 \b] [:right \r] [:right \r] [:move] [:f1 nil]]] task)
@@ -248,11 +268,11 @@
   (require '[incanter.core :refer [view]])
   (require '[incanter.charts :as ic])
   (time 
-    (let [population (repeatedly 1000 #(generate-individual task))
+    (let [population (repeatedly 300 #(generate-individual task))
           generations (iterate (partial run-generation task) population)
           results (take 1000 (take-until #(-> % meta :perfect?) generations))
           best (-> results last meta)]
-      ;(view (ic/xy-plot (range) (map (comp :best-fitness meta) results)))
+      (view (ic/xy-plot (range) (map (comp :score :best-fitness meta) results)))
       (clojure.pprint/pprint best)
       (run-program (:best-individual best) task)))
   )
