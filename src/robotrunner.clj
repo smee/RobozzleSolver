@@ -204,7 +204,7 @@
         children (mapcat (partial crossover (:subs task)) (shuffle good-third) (shuffle good-third))
 ;        children (concat good-third good-third)
         new-population (concat good-third (map (partial mutate task) children))
-        perfect? (= 1e6 best-fitness)]
+        perfect? (>= (:score best-fitness) 1e6)]
     (when perfect?
       (println "found one:" (pr-str best-individual) best-fitness))
     (with-meta new-population 
@@ -251,7 +251,7 @@
 
 (defn post-program [task program cookie-store]
   (http/post "http://robozzle.com/js/submit.aspx"
-             {:headers {"Referer" (str "http://robozzle.com/play.aspx?puzzle=" (:id task))
+             {:headers {"Referer" (str "http://www.robozzle.com/js/play.aspx?puzzle=" (:id task))
                         "Origin" "http://robozzle.com"}
               :cookie-store cookie-store
               :follow-redirects false
@@ -259,20 +259,28 @@
                             "solution" (encode-program program)}}))
 
 (comment
-  (def task (parse "d:\\Dropbox\\workspaces\\private-workspace\\robozzleGA\\play.aspx@puzzle=27"))
+  (def task (parse "puzzles/567"))
   (def task (parse (rand-nth (file-seq (as-file "/home/steffen/daten/privat/robozzle/")))))
   (print-state (init-state task []))
-  (run-program [[[:move] [:right \b] [:right \g] [:f1]]] task)
+  (run-program [[[:move] [:left] [:move] [:right] [:f1]]] task)
   (run-program [[[:move nil] [:f1 \b] [:right \r] [:right \r] [:move] [:f1 nil]]] task)
   
-  (require '[incanter.core :refer [view]])
-  (require '[incanter.charts :as ic])
+  (require '[chart-utils.jfreechart :as ic :refer [view]])
   (time 
-    (let [population (repeatedly 300 #(generate-individual task))
+   (let [population (repeatedly 300 #(generate-individual task))
           generations (iterate (partial run-generation task) population)
+          chart (doto (ic/xy-plot (range) []) view)
+          scores (atom [])
           results (take 1000 (take-until #(-> % meta :perfect?) generations))
+         _ (dorun
+            (map (fn [res]
+                   (when-let [score ((comp :score :best-fitness meta) res)]
+                     (let [_ (swap! scores conj score)
+                           n (count @scores)]
+                       (ic/perf-set-data chart [(range n) @scores] 0))))
+                  results))
           best (-> results last meta)]
-      (view (ic/xy-plot (range) (map (comp :score :best-fitness meta) results)))
-      (clojure.pprint/pprint best)
+     (def best best)
+     (def results results)
       (run-program (:best-individual best) task)))
   )

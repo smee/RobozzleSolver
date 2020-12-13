@@ -1,0 +1,155 @@
+
+
+<!DOCTYPE html PUBLIC '-//W3C//DTD XHTML 1.0 Strict//EN'
+	'http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd'>
+
+<!-- 
+Copyright © 2009, Blake Coverett 
+Use and Redistribute Freely under the Ms-PL
+http://www.opensource.org/licenses/ms-pl.html
+-->
+
+<html xmlns='http://www.w3.org/1999/xhtml' xml:lang='en' lang='en'>
+	<head>
+		<title>RoboZZle</title>
+		<meta http-equiv='Content-Type' content='text/html; charset=utf-8'/>
+	    <link href="../stats.css" rel="stylesheet" type="text/css"/>
+		<script type='text/javascript' src='base.js'></script>
+
+		<script type='text/javascript'>
+	    var puzzles = [{
+   id:223,
+   title:"right on red, ??? on green",
+   about:"",
+   robotCol:7,
+   robotRow:6,
+   robotDir:0,
+   subs:[5,5,0,0,0],
+   allowedCommands:0,
+   board:"                                        G            RbrbbR          b bb b         Gbbbbbr          rbbbbbG         b bb b          RbbrbR            G                                        "
+}];
+    
+				    //<![CDATA[
+		    base.require('html', 'robozzle');
+
+			base.domReady(function() {
+				robozzle.CreateBoard(16, 12, 5, 10);
+				robozzle.LoadPuzzle(puzzles[0],[]);
+			});
+		//]]></script>
+		<style type='text/css'>
+			#body { background: #404040; }
+			#menu { text-align: center; }
+			#loginBar { position: absolute; top: 20px; right: 80px; }					
+			#robozzle { font: 25px/25px Arial; width: 680px; height: 720px; background: #333; margin: auto; }
+			#robozzle h2, #robozzle h3 { color: white; text-align: center; padding: 0px; margin: 0px; }
+			#robozzle h2 { font-size: 25px; line-height: 30px; }
+			#robozzle h3 { font-size: 15px; line-height: 20px; }
+			#robozzle table { border-collapse: collapse; table-layout: fixed; margin: auto; }
+			#robozzle td { padding: 0px; }
+			#board td, #boardEdit td { width: 40px; height: 40px; 
+				background: url(images/board.png) no-repeat; }
+			#robozzle hr { height: 1px; background: white; border-width: 0px; }
+			#program th { color: white; width: 2em; background: #333; padding: 0px; }
+			#program td, #resources td { width: 30px; height: 30px; cursor: pointer;
+				background:url(images/resources.png) no-repeat; }
+			#program td { color: black; font-size: 20px; text-align: center; }
+			#resources { position: absolute; background: white; }
+			#resources td { border: 1px solid white; }
+			#controls { float: right; padding-right: 1em; }
+			#controls a { display: block; width: 75px; height: 30px; margin-bottom: 5px;
+				background-image: url(images/buttons.png); }
+			#runPuzzle { background-position:0px 0px; }
+			#runPuzzle:hover { background-position:-75px 0px; }
+			#runPuzzle:active { background-position:-150px 0px; }
+			#stepPuzzle { background-position:0px -30px; }
+			#stepPuzzle:hover { background-position:-75px -30px; }
+			#stepPuzzle:active { background-position:-150px -30px; }
+			#resetPuzzle { background-position:0px -60px; }
+			#resetPuzzle:hover { background-position:-75px -60px; }
+			#resetPuzzle:active { background-position:-150px -60px; }
+			a:active, a:focus { outline: none; }			
+		</style>
+	</head>
+	<body id='body' >
+	    <h1>RoboZZle Javascript - Alpha</h1>
+	    <p id='menu'><a href="/js/">Back to puzzle list</a></p>
+        <div id='loginBar'>
+        <a href="/login.aspx?ReturnURL=http%3a%2f%2fwww.robozzle.com%2fjs%2fplay.aspx%3fpuzzle%3d223">Login</a> | <a href="/register.aspx?ReturnURL=http%3a%2f%2fwww.robozzle.com%2fjs%2fplay.aspx%3fpuzzle%3d223">Register</a>
+        </div>
+		<div id='robozzle'>
+			<h2 id='puzzleTitle'></h2>
+			<h3 id='puzzleAbout'></h3>
+			<table>
+				<tbody id='board'/>
+			</table>
+			<hr/>
+			<div id='controls'>
+				<a id='runPuzzle' href='#' style='background-position: -225px 0px'></a>
+				<a id='stepPuzzle' href='#' style='background-position: -225px -30px'></a>
+				<a id='resetPuzzle' href='#'></a>
+			</div>
+			<table>
+				<tbody id='program'/>
+			</table>
+			<table id='resources' style='display:none'>
+				<tbody>
+					<tr>
+						<td id='forward' style='background-position: -30px 0px'></td>
+						<td id='left' style='background-position: -60px 0px'></td>
+						<td id='right' style='background-position: -90px 0px'></td>
+						<td id='paintred' style='background-position: -270px 0px'></td>
+						<td id='paintgreen' style='background-position: -300px 0px'></td>
+						<td id='paintblue' style='background-position: -330px 0px'></td>
+					</tr>
+					<tr>
+						<td id='f1' style='background-position: -120px 0px'></td>
+						<td id='f2' style='background-position: -150px 0px'></td>
+						<td id='f3' style='background-position: -180px 0px'></td>
+						<td id='f4' style='background-position: -210px 0px'></td>
+						<td id='f5' style='background-position: -240px 0px'></td>
+						<td style='cursor:default;background-position: -360px -90px'></td>
+					</tr>
+					<tr>
+						<td id='red' style='background-position: 0px -30px'></td>
+						<td id='green' style='background-position: 0px -60px'></td>
+						<td id='blue' style='background-position: 0px -90px'></td>
+						<td id='grey' style='background-position: 0px 0px'></td>
+						<td id='nop' style='background-position: -360px 0px'></td>
+						<td style='cursor:default;background-position: -360px -90px'></td>
+					</tr>
+					<tr style='display:none'>
+						<td id='blankProgram' style='background-position: -360px -30px'></td>
+						<td id='unavailableProgram' style='background-position: -360px -60px'></td>
+						<td></td>
+						<td></td>
+						<td></td>
+						<td></td>
+					</tr>
+				</tbody>
+			</table>
+			<table id='boardEdit' style='display:none'>
+				<tbody>
+					<tr>
+						<td id='star' style='background-position: -200px 0px'></td>
+						<td id='robot0' style='background-position: -40px 0px'></td>
+						<td id='robot1' style='background-position: -80px 0px'></td>
+						<td id='robot2' style='background-position: -120px 0px'></td>
+						<td id='robot3' style='background-position: -160px 0px'></td>
+					</tr>
+					<tr>
+						<td id='boardgrey' style='background-position: 0px 0px'></td>
+						<td id='boardred' style='background-position: 0px -40px'></td>
+						<td id='boardgreen' style='background-position: 0px -80px'></td>
+						<td id='boardblue' style='background-position: 0px -120px'></td>
+						<td></td>
+					</tr>
+				</tbody>
+			</table>
+			<select id='puzzleList' size='2' style='display:none'></select>
+		</div>
+		<p style="font-size: small; margin-top: 20px;">©2009 <a href="http://igoro.com/">Igor Ostrovsky</a> and other <a href="/contributors.aspx"> contributors</a>. <a href="/tou.aspx">Terms of use</a></p><script type="text/javascript"> var gaJsHost = (("https:" == document.location.protocol) ? "https://ssl." : "http://www."); document.write(unescape("%3Cscript src='" + gaJsHost + "google-analytics.com/ga.js' type='text/javascript'%3E%3C/script%3E")); </script> <script type="text/javascript"> try { var pageTracker = _gat._getTracker("UA-4374255-2"); pageTracker._trackPageview(); } catch(err) {}</script> 
+	</body>
+</html>
+
+
